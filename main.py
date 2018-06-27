@@ -11,10 +11,10 @@ from keras.backend.tensorflow_backend import set_session
 
 MODEL_PATH = str(sys.argv[2])
 TRAINING_DATA_PATH = 'data/TRAIN_FILE.txt'
-GLOVE_EMBEDDER_PATH = 'data/glove.twitter.27B.50d.txt'
+GLOVE_EMBEDDER_PATH = 'data/glove.42B.300d.txt'
+CLASS_OCCUR_THRES = 20
 
 MLP_DIMS = [int(dim) for dim in sys.argv[3].split('_')]
-print(MLP_DIMS)
 
 
 RELATIONS_CLASS_MAP = {
@@ -77,7 +77,6 @@ def load_glove():
       progress(idx + 1, num_lines)
   print('\n')
   return glove_dict
-  
 
 def load_data(path, embed_dict):
   print('preprocessing sentences...')
@@ -86,20 +85,41 @@ def load_data(path, embed_dict):
     lines = f.readlines()
     f.close()
 
-  contexts = []
-  labels = np.zeros((int(len(lines) / 4), len(RELATIONS_CLASS_MAP)))
+  print('Grab contexts...')
+  raw_contexts = []
+  raw_labels = []
   for idx, line in enumerate(lines):
     if (idx % 4 == 0):
-      context = grabContext(line)
-      context = [embed_dict[w] for w in context if w in embed_dict]
-      if (len(context) == 0):
-        context = np.zeros_like(embed_dict['apple'])
-      else:
-        context = np.average(np.array(context), axis=0)
-      contexts.append(context)
+      raw_context = grabContext(line)
+      raw_contexts.append(raw_context)
     elif (idx % 4 == 1):
-      labels[int((idx - 1) / 4)][RELATIONS_CLASS_MAP[line[:-1]]] = 1
+      raw_labels.append(RELATIONS_CLASS_MAP[line[:-1]])
     progress(idx + 1, len(lines))
+  raw_labels = np.array(raw_labels)
+
+  print('\nComputing class occurrence dictionary...')
+  class_occur_dict = {}
+  for sentence_id, raw_context in enumerate(raw_contexts):
+    for w in raw_context:
+      if w not in class_occur_dict:
+        class_occur_dict[w] = [raw_labels[sentence_id]]
+      elif raw_labels[sentence_id] not in class_occur_dict[w]:
+        class_occur_dict[w].append(raw_labels[sentence_id])
+      progress(sentence_id + 1, len(raw_contexts))
+
+  labels = np.eye(len(RELATIONS_CLASS_MAP))[raw_labels]
+
+  print('\nEmbedding')
+  contexts = []
+  for sentence_id, raw_context in enumerate(raw_contexts):
+    context = [embed_dict[w] for w in raw_context if w in embed_dict and len(class_occur_dict[w]) <= CLASS_OCCUR_THRES]
+    if (len(context) == 0):
+      context = np.zeros_like(embed_dict['apple'])
+    else:
+      context = np.average(np.array(context), axis=0)
+    contexts.append(context)
+    progress(sentence_id + 1, len(raw_contexts))
+  print('\n')
   contexts = np.array(contexts)
 
   p = np.random.permutation(len(contexts))
